@@ -1,0 +1,5 @@
+site_name: MemoryStore API Docs
+nav:
+  - About: index.md
+  - API: API.md
+  - Experimental: EXP.md
