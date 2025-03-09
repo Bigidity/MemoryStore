@@ -1,5 +1,13 @@
 site_name: MemoryStore API Docs
+
+markdown_extensions:
+  - admonition
+
+
 nav:
-  - About: index.md
-  - API: API.md
-  - Experimental: EXP.md
+  - About:
+      - About: about.md
+      - MemoryStore: index.md
+  - Documentation:
+      - API: API.md
+      - Experimental: EXP.md

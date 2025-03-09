@@ -11,7 +11,9 @@ The MemoryStore Module is a server-side utility designed to simplify interaction
 - Comprehensive error handling and warning system
 - Configurable settings for production environments
 
-This module is optimized for production use and includes safeguards against common issues such as memory leaks and overflow conditions.
+!!! note
+    This module is optimized for production use and includes safeguards against common issues such as memory leaks and overflow conditions.
+
 
 ## Installation
 
@@ -19,6 +21,9 @@ This module is optimized for production use and includes safeguards against comm
 
 - [Knit](https://github.com/Sleitnick/Knit) framework
 - [Trove](https://github.com/Sleitnick/RbxUtil/tree/main/modules/trove) utility
+
+!!! info
+    These components are included by default in the **Roblox Studio Package**. Alternatively, you may configure the RBXUtil variables to reference the appropriate modules within the MemoryStore Module. For advanced implementation, refer to the [Experimental documentation](./EXP.md).
 
 ### Setup
 
@@ -50,6 +55,10 @@ local MemoryStore = Knit.GetService("MemoryStore")
 MemoryStore:SetHashMap("PlayerData", "Player_123", {coins = 500})
 ```
 
+!!! warning "Important"
+    The MemoryStore service is server-side only and should not be directly accessed from client scripts. Use Knit Controllers and RemoteEvents/RemoteFunctions for client-server communication.
+
+
 ## Configuration
 
 The module comes with default settings that can be adjusted before initializing:
@@ -70,12 +79,18 @@ MemoryStore.Settings = {
 }
 ```
 
+!!! info "Tip"
+    For production environments, consider setting `DebugMode = false` to reduce console output while keeping `WarningsEnabled` and `ErrorsEnabled` true to catch potential issues.
+
 ## Documentation
 
 For detailed information on all available functions, please refer to:
 
 - [API Documentation](./API.md) - Core functionality
 - [Experimental Features](./EXP.md) - Features still in testing
+
+!!! note
+    Functions marked with **[EXPERIMENTAL]** in the API documentation are still being tested and may change in future releases.
 
 ## Error Handling
 
@@ -92,3 +107,6 @@ MemoryStore.WarningOccurred.Event:Connect(function(message, warningType)
     -- Monitor or log warnings
 end)
 ```
+
+!!! warning 
+    Failure to handle critical errors could lead to data loss or service interruption. Always implement appropriate error handlers in production environments.
