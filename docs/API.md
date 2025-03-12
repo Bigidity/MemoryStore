@@ -2,9 +2,6 @@
 
 This document provides detailed information about all public methods available in the MemoryStore module.
 
-!!! note
-    Functions marked with **[EXPERIMENTAL]** are still under development and may change in future versions. See the [Experimental](./EXP.md) documentation for more details.
-
 ## HashMap Functions
 
 HashMaps provide key-value storage for structured data.
@@ -26,6 +23,8 @@ MemoryStore:SetHashMap(name: string, key: string, value: any, expiryTime: number
 !!! warning "Important"
     Values must be serializable by Roblox's MemoryStoreService. Complex objects with circular references or certain data types may cause errors.
 
+!!! info "Retry Mechanism"
+    This function includes an automatic retry mechanism that will attempt the operation up to 3 times with exponential backoff before failing.
 
 **Example:**
 ```lua
@@ -58,6 +57,8 @@ local value = MemoryStore:GetHashMap(name: string, key: string)
 !!! info "Tip"
     Always check if the returned value is nil before attempting to use it, as entries may have expired.
 
+!!! info "Retry Mechanism"
+    This function includes an automatic retry mechanism that will attempt the operation up to 3 times with exponential backoff before failing.
 
 **Example:**
 ```lua
@@ -95,6 +96,8 @@ MemoryStore:SetSortedMap(name: string, key: string, value: number, expiryTime: n
 !!! warning
     The value parameter must be a number. Attempting to store non-numeric values will result in an error.
 
+!!! info "Retry Mechanism"
+    This function includes an automatic retry mechanism that will attempt the operation up to 3 times with exponential backoff before failing.
 
 **Notes:**
 - Automatically prevents overflow by trimming excess entries if the map exceeds Settings.MaxSortedMapEntries
@@ -122,7 +125,6 @@ local size = MemoryStore:GetSortedMapSize(name: string)
 !!! note
     This function is useful for monitoring leaderboard sizes and ensuring they don't exceed the maximum allowed entries.
 
-
 **Example:**
 ```lua
 local leaderboardSize = MemoryStore:GetSortedMapSize("WeeklyScores")
@@ -149,6 +151,8 @@ MemoryStore:Enqueue(name: string, value: any, expiryTime: number?)
 !!! warning
     If a queue exceeds the Settings.QueueMaxSize limit, a warning will be issued but items will still be added. Consider implementing a purge mechanism for very active queues.
 
+!!! info "Retry Mechanism"
+    This function includes an automatic retry mechanism that will attempt the operation up to 3 times with exponential backoff before failing.
 
 **Example:**
 ```lua
@@ -177,37 +181,110 @@ local length = MemoryStore:GetQueueLength(name: string)
 !!! info "Tip"
     Monitor queue lengths periodically to detect potential bottlenecks in message processing systems.
 
-
 **Example:**
 ```lua
 local messageCount = MemoryStore:GetQueueLength("MessageQueue")
 print("There are", messageCount, "messages waiting to be processed")
 ```
 
-## Experimental Functions
+## Cleanup System
 
-!!! warning "Caution"
-    The following functions are experimental and not fully implemented. See [Experimental Documentation](./EXP.md) for more details.
+The cleanup system helps manage memory store resources through scheduled maintenance operations. It was previously marked as experimental but is now fully implemented.
 
-### StartAutoCleanup **[EXPERIMENTAL]**
+### AddCleanupTask
 
-Initializes the automatic cleanup process.
+Registers a new cleanup task to be executed during the cleanup cycle.
+
+```lua
+MemoryStore:AddCleanupTask(taskName: string, callback: () -> ())
+```
+
+**Parameters:**
+- `taskName`: A unique identifier for this cleanup task
+- `callback`: A function to be executed during cleanup cycles
+
+!!! warning
+    Adding a task with an existing name will throw an error. Ensure your task names are unique.
+
+**Example:**
+```lua
+-- Register a cleanup task to remove expired player sessions
+MemoryStore:AddCleanupTask("CleanPlayerSessions", function()
+    -- Custom cleanup logic
+    print("Cleaning up expired player sessions...")
+    -- Implementation here
+end)
+```
+
+### ForceCleanupCycle
+
+Immediately executes all registered cleanup tasks.
+
+```lua
+MemoryStore:ForceCleanupCycle()
+```
+
+!!! note
+    While automatic cleanup happens based on the CleanupInterval, this function allows you to manually trigger a cleanup when needed.
+
+**Example:**
+```lua
+-- Force an immediate cleanup, perhaps before a server shutdown
+MemoryStore:ForceCleanupCycle()
+```
+
+### SetCleanupCycleTo
+
+Changes the interval between automatic cleanup cycles.
+
+```lua
+MemoryStore:SetCleanupCycleTo(minutes: number)
+```
+
+**Parameters:**
+- `minutes`: The new cleanup interval in minutes (must be at least 1 minute)
+
+!!! warning
+    Setting too frequent cleanups may impact performance. The recommended minimum is 5 minutes.
+
+**Example:**
+```lua
+-- Set cleanup to run every 15 minutes
+MemoryStore:SetCleanupCycleTo(15)
+```
+
+### StartAutoCleanup
+
+Initializes the automatic cleanup process. This is automatically called during service initialization.
 
 ```lua
 MemoryStore:StartAutoCleanup()
 ```
 
 !!! note
-    This function is called automatically during service initialization.
+    You generally don't need to call this manually as it's automatically invoked when the service starts.
 
+## Error Handling
 
-### ClearExpiredEntries **[EXPERIMENTAL]**
+The MemoryStore module includes an event-based error and warning system.
 
-Performs the actual cleanup operation.
+### Error Events
+
+You can subscribe to error and warning events to monitor MemoryStore operations:
 
 ```lua
-MemoryStore:ClearExpiredEntries()
+-- Listen for critical errors
+MemoryStore.ErrorOccurred.Event:Connect(function(message, errorType)
+    -- Log or handle the error
+    print("MemoryStore Error:", message, errorType)
+end)
+
+-- Listen for non-critical warnings
+MemoryStore.WarningOccurred.Event:Connect(function(message, warningType)
+    -- Log or handle the warning
+    print("MemoryStore Warning:", message, warningType)
+end)
 ```
 
-!!! danger
-    Implementation is incomplete. Use with caution.
+!!! tip
+    Connecting to these events allows you to implement custom logging or error handling strategies.

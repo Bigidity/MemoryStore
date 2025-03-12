@@ -3,7 +3,8 @@
 MemoryStore Module (Optimized for Production)
 - Uses Knit
 - Server-side only
-- Includes adjustable settings & auto-cleanup
+- Includes retry mechanism for failed operations
+- Dynamic cleanup task management
 - Event-based error/warning system
 
 ]]
@@ -14,15 +15,18 @@ local Trove = require(game.ReplicatedStorage.Packages.Trove)
 
 --// Module
 local MemoryStore = Knit.CreateService {
-	Name = "MemoryStore"
+	Name = "MemoryStore",
+	CleanupTasks = {}, -- Holds registered cleanup tasks
+	CleanupInterval = 300 -- Default: 5 minutes
 }
 
 --// Adjustable Settings
 local Settings = {
 	DefaultExpiryTime = 3600, -- 1 hour
-	AutoCleanupInterval = 300, -- 5 minutes
 	MaxSortedMapEntries = 100, -- Max leaderboard entries
 	QueueMaxSize = 500, -- Max messages before auto-purge
+	RetryAttempts = 3, -- Number of times to retry failed operations
+	RetryDelay = 0.5, -- Initial delay before retrying (seconds, doubles each attempt)
 	DebugMode = true, -- Enable logging
 	WarningsEnabled = true, -- Enable warnings for non-critical issues
 	ErrorsEnabled = true -- Enable errors for critical failures
@@ -31,15 +35,20 @@ local Settings = {
 --// Centralized Error Messages
 local ErrorMessages = {
 	InvalidKey = "Invalid key provided for %s in %s.",
-	HashMapSetFail = "Failed to set key '%s' in HashMap '%s'.",
+	HashMapSetFail = "Failed to set key '%s' in HashMap '%s' after retries.",
+	HashMapGetFail = "Failed to retrieve key '%s' from HashMap '%s' after retries.",
 	SortedMapOverflow = "SortedMap '%s' exceeded max size (%d). Trimming excess entries.",
 	QueueFull = "Queue '%s' is full (%d/%d items). Consider purging.",
-	AutoCleanupFail = "Auto-cleanup failed unexpectedly."
+	AutoCleanupFail = "Auto-cleanup failed unexpectedly.",
+	CleanupTaskExists = "Cleanup task '%s' already exists.",
+	CleanupTaskNotFound = "Cleanup task '%s' not found.",
+	InvalidCleanupInterval = "Cleanup interval must be greater than 1 minute.",
+	RetryFailed = "Operation '%s' failed after %d attempts."
 }
 
 --// Error & Warning Events
-MemoryStore.ErrorOccurred = Instance.new("BindableEvent") -- Fires for critical failures
-MemoryStore.WarningOccurred = Instance.new("BindableEvent") -- Fires for warnings
+MemoryStore.ErrorOccurred = Instance.new("BindableEvent")
+MemoryStore.WarningOccurred = Instance.new("BindableEvent")
 
 --// Helper Functions
 local function getHashMap(name: string)
@@ -64,7 +73,7 @@ end
 local function throwError(errorKey, ...)
 	if Settings.ErrorsEnabled then
 		local message = ErrorMessages[errorKey]:format(...)
-		MemoryStore.ErrorOccurred:Fire(message, "MemoryStoreError") -- Fire event for listeners
+		MemoryStore.ErrorOccurred:Fire(message, "MemoryStoreError")
 		error("[MemoryStore Error] " .. message, 2)
 	end
 end
@@ -72,9 +81,32 @@ end
 local function throwWarning(errorKey, ...)
 	if Settings.WarningsEnabled then
 		local message = ErrorMessages[errorKey]:format(...)
-		MemoryStore.WarningOccurred:Fire(message, "MemoryStoreWarning") -- Fire event for listeners
+		MemoryStore.WarningOccurred:Fire(message, "MemoryStoreWarning")
 		warn("[MemoryStore Warning] " .. message)
 	end
+end
+
+--// Retry Wrapper
+local function withRetry(operationName, func, ...)
+	local attempts = 0
+	local delay = Settings.RetryDelay
+	local success, result
+
+	while attempts < Settings.RetryAttempts do
+		attempts += 1
+		success, result = pcall(func, ...)
+
+		if success then
+			return result -- Return result if successful
+		end
+
+		debugLog(("Retry %d for %s failed: %s"):format(attempts, operationName, tostring(result)))
+		task.wait(delay) -- Exponential backoff
+		delay = delay * 2
+	end
+
+	throwError("RetryFailed", operationName, Settings.RetryAttempts)
+	return nil
 end
 
 --// Public Functions
@@ -87,7 +119,7 @@ function MemoryStore:SetHashMap(name: string, key: string, value: any, expiryTim
 		return
 	end
 
-	local success = pcall(function()
+	local success = withRetry("SetHashMap", function()
 		map:SetAsync(key, value, expiryTime or Settings.DefaultExpiryTime)
 	end)
 
@@ -103,14 +135,9 @@ function MemoryStore:GetHashMap(name: string, key: string)
 		return nil
 	end
 
-	local success, result = pcall(function()
+	return withRetry("GetHashMap", function()
 		return map:GetAsync(key)
 	end)
-
-	if not success then
-		throwWarning("HashMapGetFail", key, name)
-	end
-	return result
 end
 
 -- SortedMap Functions
@@ -121,21 +148,9 @@ function MemoryStore:SetSortedMap(name: string, key: string, value: number, expi
 		return
 	end
 
-	sortedMap:SetAsync(key, value, expiryTime or Settings.DefaultExpiryTime)
-
-	-- Prevent leaderboard overflow
-	if self:GetSortedMapSize(name) > Settings.MaxSortedMapEntries then
-		throwWarning("SortedMapOverflow", name, self:GetSortedMapSize(name))
-		self:TrimSortedMap(name, Settings.MaxSortedMapEntries)
-	end
-end
-
-function MemoryStore:GetSortedMapSize(name: string)
-	local sortedMap = getSortedMap(name)
-	local success, result = pcall(function()
-		return sortedMap:GetRangeAsync(Enum.SortDirection.Descending, 1)
+	withRetry("SetSortedMap", function()
+		sortedMap:SetAsync(key, value, expiryTime or Settings.DefaultExpiryTime)
 	end)
-	return success and #result or 0
 end
 
 -- Queue Functions
@@ -148,40 +163,48 @@ function MemoryStore:Enqueue(name: string, value: any, expiryTime: number?)
 		throwWarning("QueueFull", name, currentSize, Settings.QueueMaxSize)
 	end
 
-	queue:AddAsync(value, expiryTime or Settings.DefaultExpiryTime)
-end
-
-function MemoryStore:GetQueueLength(name: string)
-	local queue = getQueue(name)
-	local success, result = pcall(function()
-		return queue:GetLengthAsync()
+	withRetry("Enqueue", function()
+		queue:AddAsync(value, expiryTime or Settings.DefaultExpiryTime)
 	end)
-	if not success then
-		throwWarning("QueueLengthFail", name)
-	end
-	return success and result or 0
 end
 
--- Auto Cleanup System || CONCEPT
+-- Cleanup Task System
+function MemoryStore:AddCleanupTask(taskName: string, callback: () -> ())
+	if self.CleanupTasks[taskName] then
+		throwError("CleanupTaskExists", taskName)
+		return
+	end
+
+	self.CleanupTasks[taskName] = callback
+	debugLog("Added cleanup task: " .. taskName)
+end
+
+function MemoryStore:ForceCleanupCycle()
+	debugLog("Forcing cleanup cycle...")
+	for taskName, taskFunc in pairs(self.CleanupTasks) do
+		local success, err = pcall(taskFunc)
+		if not success then
+			throwWarning("AutoCleanupFail", taskName, err)
+		end
+	end
+end
+
+function MemoryStore:SetCleanupCycleTo(minutes: number)
+	if minutes < 1 then
+		throwError("InvalidCleanupInterval")
+		return
+	end
+
+	self.CleanupInterval = minutes * 60
+	debugLog("Cleanup cycle set to every " .. minutes .. " minutes.")
+end
+
+-- Auto Cleanup System
 function MemoryStore:StartAutoCleanup()
 	local cleanupTrove = Trove.new()
-	cleanupTrove:AddTask(Settings.AutoCleanupInterval, function()
-		local success = pcall(function()
-			self:ClearExpiredEntries()
-		end)
-		if not success then
-			throwError("AutoCleanupFail")
-		end
+	cleanupTrove:AddTask(self.CleanupInterval, function()
+		self:ForceCleanupCycle()
 	end)
-end
-
-function MemoryStore:ClearExpiredEntries()
-	local success, result = pcall(function()
-	end)
-
-	if not success then
-		throwWarning("AutoCleanupWarning")
-	end
 end
 
 --// Start Auto-Cleanup on Initialization
