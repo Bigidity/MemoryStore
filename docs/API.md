@@ -189,80 +189,119 @@ print("There are", messageCount, "messages waiting to be processed")
 
 ## Cleanup System
 
-The cleanup system helps manage memory store resources through scheduled maintenance operations. It was previously marked as experimental but is now fully implemented.
+The cleanup system manages registered maintenance tasks that execute on a fixed schedule to keep memory store usage efficient. It supports manual control and dynamic configuration for flexible resource management.
+
+---
 
 ### AddCleanupTask
 
-Registers a new cleanup task to be executed during the cleanup cycle.
+Registers a named cleanup task to be run during every cleanup cycle.
 
 ```lua
 MemoryStore:AddCleanupTask(taskName: string, callback: () -> ())
 ```
 
 **Parameters:**
-- `taskName`: A unique identifier for this cleanup task
-- `callback`: A function to be executed during cleanup cycles
+- `taskName`: A unique identifier for this cleanup task.
+- `callback`: A function that will be executed during cleanup cycles.
 
 !!! warning
-    Adding a task with an existing name will throw an error. Ensure your task names are unique.
+    Adding a task with an existing name will raise an error. Use unique task names to avoid collisions.
 
 **Example:**
 ```lua
--- Register a cleanup task to remove expired player sessions
-MemoryStore:AddCleanupTask("CleanPlayerSessions", function()
-    -- Custom cleanup logic
-    print("Cleaning up expired player sessions...")
-    -- Implementation here
+MemoryStore:AddCleanupTask("PurgeInactiveQueues", function()
+    print("Purging queues with no recent activity...")
+    -- Custom logic to remove stale data
 end)
 ```
 
+---
+
 ### ForceCleanupCycle
 
-Immediately executes all registered cleanup tasks.
+Immediately executes all currently registered cleanup tasks.
 
 ```lua
 MemoryStore:ForceCleanupCycle()
 ```
 
+**Use Case:**  
+Call this method when you need to force cleanup—such as before a server shutdown or after critical events.
+
 !!! note
-    While automatic cleanup happens based on the CleanupInterval, this function allows you to manually trigger a cleanup when needed.
+    This function does not respect the automatic interval and runs all tasks immediately.
 
 **Example:**
 ```lua
--- Force an immediate cleanup, perhaps before a server shutdown
+-- Trigger cleanup manually
 MemoryStore:ForceCleanupCycle()
 ```
 
+---
+
 ### SetCleanupCycleTo
 
-Changes the interval between automatic cleanup cycles.
+Changes the interval for automatic cleanup task execution.
 
 ```lua
 MemoryStore:SetCleanupCycleTo(minutes: number)
 ```
 
 **Parameters:**
-- `minutes`: The new cleanup interval in minutes (must be at least 1 minute)
+- `minutes`: The new interval in minutes (must be ≥ 1)
 
 !!! warning
-    Setting too frequent cleanups may impact performance. The recommended minimum is 5 minutes.
+    Setting the interval too low can affect server performance. A recommended minimum is 5 minutes for most production scenarios.
 
 **Example:**
 ```lua
--- Set cleanup to run every 15 minutes
-MemoryStore:SetCleanupCycleTo(15)
+-- Schedule cleanup to run every 10 minutes
+MemoryStore:SetCleanupCycleTo(10)
 ```
+
+---
 
 ### StartAutoCleanup
 
-Initializes the automatic cleanup process. This is automatically called during service initialization.
+Begins the automatic cleanup cycle using the configured interval. Internally uses `task.spawn()` and `task.wait()` for consistent loop execution.
 
 ```lua
 MemoryStore:StartAutoCleanup()
 ```
 
+**Behavior:**
+- Runs cleanup tasks continuously on a loop defined by `CleanupInterval`.
+- Automatically started during service initialization, but can be manually restarted if stopped.
+
 !!! note
-    You generally don't need to call this manually as it's automatically invoked when the service starts.
+    Manual invocation is only needed if you call `StopAutoCleanup()` and wish to resume the loop.
+
+**Example:**
+```lua
+-- Restart the cleanup system if it was stopped
+MemoryStore:StartAutoCleanup()
+```
+
+---
+
+### StopAutoCleanup
+
+Stops the currently running auto-cleanup cycle.
+
+```lua
+MemoryStore:StopAutoCleanup()
+```
+
+**Behavior:**
+- Terminates the background task responsible for periodic cleanup.
+- Useful for maintenance windows or runtime control scenarios.
+
+**Example:**
+```lua
+-- Stop automatic cleanup for the duration of a data migration
+MemoryStore:StopAutoCleanup()
+```
 
 ## Error Handling
 
